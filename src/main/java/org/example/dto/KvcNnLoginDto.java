@@ -12,7 +12,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class KvcNnLoginDto implements Serializable {
 
-  private String csrfMiddlewareToken;
   private String captchaCode;
   private String captchaGuid;
   private String accountNumber;
@@ -21,8 +20,7 @@ public class KvcNnLoginDto implements Serializable {
   @Override
   public String toString() {
     return "{" +
-        "csrfMiddlewareToken='" + csrfMiddlewareToken + '\'' +
-        ", captchaCode='" + captchaCode + '\'' +
+        "captchaCode='" + captchaCode + '\'' +
         ", captchaGuid='" + captchaGuid + '\'' +
         ", accountNumber='" + accountNumber + '\'' +
         ", accountRegion='" + accountRegion + '\'' +

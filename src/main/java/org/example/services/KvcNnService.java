@@ -5,36 +5,46 @@ import static org.example.utils.ConverterUtils.isNumber;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.net.URI;
 import java.net.URL;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpRequest.BodyPublishers;
-import java.net.http.HttpResponse;
-import java.util.Objects;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import javax.swing.ImageIcon;
 import javax.swing.JOptionPane;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.example.dto.KvcNnCounterDto;
 import org.example.dto.KvcNnLoginDto;
+import org.jsoup.Connection.Method;
+import org.jsoup.Connection.Response;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 
 @Slf4j
 public class KvcNnService {
 
-  private final HttpClient client;
-  private final String hostName;
+  private final URL url;
+  private final String userAgent;
 
-  private String csrfMiddlewareToken;
-  private String csrfToken;
-  private String sessionMeter;
+  private Map<String, String> cookies;
+  private List<KvcNnCounterDto> counters;
 
+  @SneakyThrows
   public KvcNnService() {
     log.info("Initialization service KvcNnService");
-    hostName = "kvc-nn.ru";
-    client = HttpClient.newHttpClient();
-    csrfMiddlewareToken = null;
-    csrfToken = null;
-    sessionMeter = null;
+    url = new URL("https://kvc-nn.ru/");
+    userAgent =
+        "Mozilla/5.0 (Windows NT 6.2; Win64; x64) "
+            + "AppleWebKit/537.36 (KHTML, like Gecko) "
+            + "Chrome/32.0.1667.0 "
+            + "Safari/537.36";
+    cookies = null;
+    counters = null;
   }
 
   public boolean authorization(String personalAccountNumber, String region) {
@@ -50,19 +60,14 @@ public class KvcNnService {
       return false;
     }
 
-    if (!getCsrfInfo()) {
-      log.error("CsrfInfo is not found");
-      return false;
-    }
-
     log.info("Entering captcha code");
     int captchaCounter = 5;
     boolean isLoginSuccess;
     do {
       log.debug("Number of attempts to enter captcha {}", captchaCounter);
-      String guid = java.util.UUID.randomUUID().toString();
-      BufferedImage captchaImage = getBufferedImageCaptcha(guid);
-      String captchaCode =
+      final String guid = java.util.UUID.randomUUID().toString();
+      final BufferedImage captchaImage = getBufferedImageCaptcha(guid); // TODO if null ???
+      final String captchaCode =
           (String)
               JOptionPane.showInputDialog(
                   null,
@@ -79,7 +84,6 @@ public class KvcNnService {
 
       final KvcNnLoginDto loginDto =
           KvcNnLoginDto.builder()
-              .csrfMiddlewareToken(csrfMiddlewareToken)
               .captchaCode(captchaCode)
               .captchaGuid(guid)
               .accountNumber(personalAccountNumber)
@@ -101,54 +105,30 @@ public class KvcNnService {
     return true;
   }
 
-  public boolean sendMeterData() {
-
-    // TODO Должен быть получен список счётчиков
-    getCntList();
-    // TODO Передача показаний
-
-    return true;
-  }
-
-  private boolean getCsrfInfo() {
-    log.info("Getting CsrfInfo");
-
-    final HttpRequest request = HttpRequest.newBuilder()
-        .uri(URI.create("https://" + hostName + "/meter/"))
-        .build();
-
-    HttpResponse<String> response;
-    try {
-      response = client.send(request, HttpResponse.BodyHandlers.ofString());
-    } catch (IOException | InterruptedException e) {
-      log.error(e.getMessage());
-      return false;
+  public boolean sendMeterData(String counterNumber, String value) {
+    if (isNull(counters)) {
+      counters = getCounters();
+      if (counters.size() == 0) {
+        log.error("Counters not found");
+        return false;
+      }
     }
 
-    if (isNull(response) || response.statusCode() != 200) {
-      log.error("Response was not received or status is not 200");
-      return false;
+    for (KvcNnCounterDto counter : counters) {
+      if (counter.getName().contains(counterNumber)) {
+
+        // TODO Передача показаний
+
+        return true;
+      }
     }
 
-    String cookie = response.headers().firstValue("Set-Cookie").orElse(null);
-    if (isNull(cookie) || !cookie.contains("csrftoken")) {
-      log.error("Cookie was not received or csrftoken is not found");
-      return false;
-    }
-    csrfToken = cookie.substring(0, cookie.indexOf(";"));
-
-    if (!response.body().contains("name='csrfmiddlewaretoken' value='")) {
-      log.error("csrfmiddlewaretoken is not found");
-      return false;
-    }
-
-    int beginIndexResponse = response.body().indexOf("name='csrfmiddlewaretoken' value='") + 34;
-    csrfMiddlewareToken = response.body().substring(beginIndexResponse, beginIndexResponse + 64);
-    return true;
+    return false;
   }
 
   private BufferedImage getBufferedImageCaptcha(String guid) {
-    String urlString = "https://captcha." + hostName + "/?uuid=" + guid + "&l=1";
+    String urlString =
+        url.getProtocol() + "://captcha." + url.getHost() + "/?uuid=" + guid + "&l=1";
     BufferedImage image = null;
     try {
       URL url = new URL(urlString);
@@ -160,69 +140,113 @@ public class KvcNnService {
   }
 
   private boolean login(KvcNnLoginDto loginDto) {
-    log.info("Login");
-    log.debug("KvcNnLoginDto {}", loginDto.toString());
-    HttpRequest httpRequest =
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://" + hostName + "/meter/"))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Cookie", "csrftoken=" + csrfToken)
-            .POST(
-                BodyPublishers.ofString(
-                    "csrfmiddlewaretoken="
-                        + loginDto.getCsrfMiddlewareToken()
-                        + "&"
-                        + "select_region="
-                        + loginDto.getAccountRegion()
-                        + "&"
-                        + "input_lc="
-                        + loginDto.getAccountNumber()
-                        + "&"
-                        + "passctr=None&"
-                        + "input_captcha="
-                        + loginDto.getCaptchaCode()
-                        + "&"
-                        + "input_guid="
-                        + loginDto.getCaptchaGuid()))
-            .build();
 
-    HttpResponse<String> response;
+    log.info("Welcome");
+    Response welcomeResponse;
+    Document welcomeDocument;
     try {
-      response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-    } catch (IOException | InterruptedException e) {
+      welcomeResponse =
+          Jsoup.connect(url + "meter/")
+              .userAgent(userAgent)
+              .timeout(10000)
+              .method(Method.GET)
+              .execute();
+      welcomeDocument = welcomeResponse.parse();
+      cookies = welcomeResponse.cookies();
+    } catch (IOException e) {
       log.error(e.getMessage());
       return false;
     }
 
-    if (isNull(response) || response.statusCode() != 302) {
-      log.error("Response was not received or status is not 302");
+    if (welcomeResponse.statusCode() != 200) {
+      log.error("Welcome page status is not 200");
       return false;
     }
 
-    String cookie = response.headers().firstValue("Set-Cookie").orElse(null);
-    if (isNull(cookie) || !cookie.contains("session_meter")) {
-      log.error("Cookie was not received or session_meter is not found");
+    Elements inputElements = welcomeDocument.select("input[name=csrfmiddlewaretoken]");
+    if (inputElements.size() == 0) {
+      log.error("csrfmiddlewaretoken is not found");
       return false;
     }
-    sessionMeter = cookie.substring(0, cookie.indexOf(";"));
+    String securityTokenKey = inputElements.get(0).attr("name");
+    String securityTokenValue = inputElements.get(0).attr("value");
 
+    log.info("Login");
+    log.debug("KvcNnLoginDto {}", loginDto.toString());
+
+    Response loginResponse;
+    try {
+      loginResponse =
+          Jsoup.connect(url + "meter/")
+              .followRedirects(false)
+              .userAgent(userAgent)
+              .header("Content-Type", "application/x-www-form-urlencoded")
+              .cookies(cookies)
+              .data(securityTokenKey, securityTokenValue)
+              .data("select_region", loginDto.getAccountRegion())
+              .data("input_lc", loginDto.getAccountNumber())
+              .data("passctr", "None")
+              .data("input_captcha", loginDto.getCaptchaCode())
+              .data("input_guid", loginDto.getCaptchaGuid())
+              .method(Method.POST)
+              .execute();
+    } catch (IOException e) {
+      log.error(e.getMessage());
+      return false;
+    }
+
+    if (loginResponse.statusCode() != 302) {
+      log.error("Login page status is not 302");
+      return false;
+    }
+
+    cookies.putAll(loginResponse.cookies());
     return true;
   }
 
-  private void getCntList() {
-    HttpRequest request =
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://" + hostName + "/meter/cntlist/"))
-            .header("Cookie", csrfToken + "; " + sessionMeter)
-            .build();
+  private List<KvcNnCounterDto> getCounters() {
+    log.info("Getting counters");
+    List<KvcNnCounterDto> counters = new ArrayList<>();
 
-    HttpResponse<String> response;
+    Response response;
+    Document document;
     try {
-      response = client.send(request, HttpResponse.BodyHandlers.ofString());
-      System.out.println();
-    } catch (IOException | InterruptedException e) {
-      e.printStackTrace();
-      return;
+      response =
+          Jsoup.connect(url + "meter/cntlist/").cookies(cookies).execute();
+      document = response.parse();
+    } catch (IOException e) {
+      log.error(e.getMessage());
+      return counters;
     }
+
+    if (response.statusCode() != 200) {
+      log.error("CounterList page status is not 200");
+      return counters;
+    }
+
+    Element countersTable = document.getElementById("meter-cntlist-table");
+    if (isNull(countersTable)) {
+      log.error("CounterList table not found");
+      return counters;
+    }
+
+    Elements trElements = countersTable.getElementsByTag("tr");
+    for (Element trElement : trElements) {
+      Elements tdElements = trElement.getElementsByTag("td");
+      if (tdElements.size() < 2) {
+        continue;
+      }
+
+      KvcNnCounterDto counterDto =
+          KvcNnCounterDto.builder()
+              .link(tdElements.get(0).select("a").attr("href").trim())
+              .name(tdElements.get(0).select("a").text())
+              .info(tdElements.get(1).text())
+              .build();
+      counters.add(counterDto);
+    }
+
+    log.info("Found {} counters", counters.size());
+    return counters;
   }
 }

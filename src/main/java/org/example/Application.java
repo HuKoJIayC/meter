@@ -8,7 +8,7 @@ public class Application {
 
     KvcNnService kvcNnService = new KvcNnService();
     if (kvcNnService.authorization(args[0], args[1])) {
-      kvcNnService.sendMeterData();
+      kvcNnService.sendMeterData(args[2], args[3]);
     }
 
 
